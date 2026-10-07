@@ -24,7 +24,6 @@ from solar_forecast.config import (
     BLOCKS_PER_DAY,
     FIBONACCI_HORIZONS_BLOCKS,
     EMA_ALPHA,
-    MIN_SAMPLES,
     SENSOR_QUARTERLY_ENERGY,
     LOCAL_WINDOW_BLOCKS,
     DAILY_OFFSET_BLOCKS
@@ -170,46 +169,51 @@ class AccuracyLearner:
         # If not all roofs have data, try to fetch from sensors
         sensor_actuals = {}
         
-        # First, try the quarterly sensors
-        quarterly_success = True
-        for roof, sensor_id in SENSOR_QUARTERLY_ENERGY.items():
+        # Try quarterly sensors first, then hourly as fallback
+        # We always try both to get the best available data
+        for roof in ['east', 'west']:
             if roof in actuals:
-                # Already have data for this roof
                 continue
-            data = db.get_latest_sensor_data(sensor_id)
-            if data and data.get('state') is not None:
-                try:
-                    value = float(data['state'])
-                    if value > 10:  # More than 10 kWh in 15 min is unrealistic
-                        value = value * 0.001  # Convert Wh to kWh
-                    
-                    sensor_actuals[roof] = value
-                except (ValueError, TypeError):
-                    quarterly_success = False
-            else:
-                quarterly_success = False
-        
-        # Fall back to hourly sensors
-        if not quarterly_success or len(sensor_actuals) < (2 - len(actuals)):
-            hourly_sensors = {
+            
+            # Try quarterly sensor
+            quarterly_sensor = SENSOR_QUARTERLY_ENERGY.get(roof)
+            if quarterly_sensor:
+                data = db.get_latest_sensor_data(quarterly_sensor)
+                if data and data.get('state') is not None:
+                    try:
+                        value = float(data['state'])
+                        if value > 10:
+                            value = value * 0.001
+                        # Only accept non-zero or reasonable values
+                        if value > 0.001:  # More than 1 Wh is reasonable
+                            sensor_actuals[roof] = value
+                            continue
+                    except (ValueError, TypeError):
+                        pass
+            
+            # Fall back to hourly sensor
+            hourly_sensor = {
                 'east': 'sensor.solar_hourly_energy_east_roof',
                 'west': 'sensor.solar_hourly_energy_west_roof'
-            }
+            }.get(roof)
             
-            for roof, sensor_id in hourly_sensors.items():
-                if roof in actuals or roof in sensor_actuals:
-                    # Already have data for this roof
-                    continue
-                data = db.get_latest_sensor_data(sensor_id)
+            if hourly_sensor:
+                data = db.get_latest_sensor_data(hourly_sensor)
                 if data and data.get('state') is not None:
                     try:
                         hourly_value = float(data['state'])
+                        if hourly_value > 10:
+                            hourly_value = hourly_value * 0.001
                         quarter_hour_value = hourly_value / BLOCKS_PER_HOUR
-                        sensor_actuals[roof] = quarter_hour_value
+                        if quarter_hour_value > 0.001:
+                            sensor_actuals[roof] = quarter_hour_value
+                            continue
                     except (ValueError, TypeError):
-                        return None
-                else:
-                    return None
+                        pass
+            
+            # If we still don't have data for this roof, fail
+            if roof not in sensor_actuals and roof not in actuals:
+                return None
         
         # Merge existing and sensor data
         all_actuals = {**actuals, **sensor_actuals}

@@ -7,8 +7,18 @@ import sys
 import os
 sys.path.insert(0, '/home/gijs')
 
+# SAFETY: run against the isolated test database, never production.
+# Must be set BEFORE importing any solar_forecast module (config reads
+# it at import time).
+os.environ['SOLAR_FORECAST_DB_DATABASE'] = 'solar_forecast_test'
+
 from datetime import datetime, timedelta, timezone
 from solar_forecast.db.client import DatabaseClient
+from solar_forecast.config import DB_DATABASE
+
+assert DB_DATABASE == 'solar_forecast_test', \
+    f'Refusing to run tests against database {DB_DATABASE!r} - ' \
+    'tests must only run against solar_forecast_test'
 import unittest.mock as mock
 import logging
 

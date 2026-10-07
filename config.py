@@ -5,14 +5,18 @@ Central Configuration
 All configuration constants for the solar forecast learning system.
 """
 
+import os
+
 # ============================================================
 # DATABASE
 # ============================================================
-DB_HOST = '10.100.123.53'
-DB_PORT = 5432
-DB_USER = 'postgres'
-DB_PASSWORD = '123GjH#@!'
-DB_DATABASE = 'homeassistant'
+# Environment overrides let tests run against an isolated database
+# (SOLAR_FORECAST_DB_DATABASE) without touching production data.
+DB_HOST = os.environ.get('SOLAR_FORECAST_DB_HOST', '10.100.123.53')
+DB_PORT = int(os.environ.get('SOLAR_FORECAST_DB_PORT', '5432'))
+DB_USER = os.environ.get('SOLAR_FORECAST_DB_USER', 'postgres')
+DB_PASSWORD = os.environ.get('SOLAR_FORECAST_DB_PASSWORD', '123GjH#@!')
+DB_DATABASE = os.environ.get('SOLAR_FORECAST_DB_DATABASE', 'homeassistant')
 
 # ============================================================
 # TIME STRUCTURE (15-minute blocks)
@@ -47,7 +51,8 @@ SENSOR_GROUPS = {
         'sensor.energy_production_d3',
         'sensor.energy_production_d4',
         'sensor.energy_production_d5',
-        'sensor.energy_production_d6',
+        'sensor.energy_production_d6',        # east d6
+        'sensor.energy_production_d7',        # east d7
     ],
     'west': [
         'sensor.energy_production_today_4',
@@ -57,6 +62,7 @@ SENSOR_GROUPS = {
         'sensor.energy_production_d4_2',
         'sensor.energy_production_d5_2',
         'sensor.energy_production_d6_2',
+        'sensor.energy_production_d7_2',
     ]
 }
 
@@ -73,7 +79,8 @@ SENSOR_QUARTERLY_ENERGY = {
 # LEARNING PARAMETERS
 # ============================================================
 EMA_ALPHA = 0.2  # Smoothing factor for EMA (0 < alpha <= 1)
-MIN_SAMPLES = 5   # Minimum observations before using learned values
+# No minimum-sample gate: cells are seeded on first observation and
+# mature over time via EMA decay.
 
 # ============================================================
 # TIME & SCHEDULING
@@ -106,6 +113,5 @@ TABLE_CORRELATION_DAILY = 'solar_correlation_daily'
 # ============================================================
 # FILE PATHS
 # ============================================================
-import os
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 SCHEMA_FILE = os.path.join(PROJECT_ROOT, 'db', 'schema.sql')

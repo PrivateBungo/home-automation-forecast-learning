@@ -56,20 +56,25 @@ class DatabaseClient:
     def query(self, query: str, params: tuple = None, fetch: bool = True):
         """
         Execute a SQL query.
-        
+
         Args:
             query: SQL query string
             params: Query parameters
             fetch: Whether to fetch results
-            
+
         Returns:
             List of rows if fetch=True, else None
+
+        Any data-modifying statement (INSERT/UPDATE/DELETE, including
+        with RETURNING) is always committed - a fetched result set must
+        never leave an open transaction behind, or the write is lost
+        when the connection closes.
         """
         with self.connection.cursor() as cur:
             cur.execute(query, params or ())
-            if fetch:
-                return cur.fetchall()
-            self.connection.commit()
+            rows = cur.fetchall() if fetch else None
+        self.connection.commit()
+        return rows
     
     def query_one(self, query: str, params: tuple = None):
         """Execute query and return single result."""
@@ -443,7 +448,8 @@ class DatabaseClient:
                 JOIN states_meta sm ON s.metadata_id = sm.metadata_id
                 WHERE sm.entity_id = %s
                   AND s.state NOT IN ('unavailable', 'unknown')
-                ORDER BY COALESCE(s.last_reported_ts, s.last_changed_ts) DESC
+                ORDER BY COALESCE(s.last_reported_ts, s.last_changed_ts) DESC NULLS LAST,
+                         s.state_id DESC
                 LIMIT 1
             """,
             (entity_id,)

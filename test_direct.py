@@ -7,9 +7,20 @@ import sys
 import os
 sys.path.insert(0, '/home/gijs')
 
+# SAFETY: run against the isolated test database, never production.
+# Must be set BEFORE importing any solar_forecast module (config reads
+# it at import time).
+os.environ['SOLAR_FORECAST_DB_DATABASE'] = 'solar_forecast_test'
+
 from datetime import datetime, timedelta, timezone
 from solar_forecast.db.client import DatabaseClient
+from solar_forecast.config import DB_DATABASE
+
+assert DB_DATABASE == 'solar_forecast_test', \
+    f'Refusing to run tests against database {DB_DATABASE!r} - ' \
+    'tests must only run against solar_forecast_test'
 from solar_forecast.processing.accuracy_learner import AccuracyLearner
+import unittest.mock as mock
 import logging
 
 logging.basicConfig(level=logging.INFO)
@@ -17,12 +28,18 @@ logger = logging.getLogger(__name__)
 
 
 def create_test_forecast_vector(peak_value=1.0, noise=0.05):
-    """Create a deterministic test forecast vector."""
+    """Create a deterministic test forecast vector.
+
+    Rolling-vector convention: index k is the (k+1)-th 15-min block
+    after generation time. Shape the first ~5 hours so the short
+    Fibonacci horizons (4, 8, 12, 20 blocks -> indexes 3, 7, 11, 19)
+    have non-zero forecast values for the learner to work with.
+    """
     import random
     random.seed(42)
     vector = [0.0] * 672
-    for i in range(24, 72):
-        hours_from_peak = abs(i - 48)
+    for i in range(1, 20):
+        hours_from_peak = abs(i - 8)  # peak ~2h after generation
         sigma = 12
         value = peak_value * (0.5 + 0.5 * (1 - hours_from_peak / sigma)) ** 2
         value = max(0, value + random.uniform(-noise, noise))
@@ -91,12 +108,16 @@ def test_direct():
     # Now manually trigger learning for the last few time points
     learner = AccuracyLearner()
     total_updates = 0
-    
-    # Try to learn from each of the last few runs
+
     for i in range(15, 17):
         run_time = base_time + timedelta(minutes=15 * i)
-        # Manually set the learner's internal time
-        result = learner.update_from_latest_actuals()
+        # The learner evaluates the block starting at "now"; actuals were
+        # stored at the previous block time, so pin "now" there.
+        learn_time = run_time - timedelta(minutes=15)
+        with mock.patch('solar_forecast.processing.accuracy_learner.datetime') as mock_datetime:
+            mock_datetime.now.return_value = learn_time
+            mock_datetime.side_effect = lambda *args, **kwargs: datetime(*args, **kwargs)
+            result = learner.update_from_latest_actuals()
         updates = result.get('updates_performed', 0)
         total_updates += updates
         logger.info(f"Run {i}: {updates} updates")

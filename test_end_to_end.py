@@ -11,8 +11,18 @@ import sys
 import os
 sys.path.insert(0, '/home/gijs')
 
+# SAFETY: run against the isolated test database, never production.
+# Must be set BEFORE importing any solar_forecast module (config reads
+# it at import time).
+os.environ['SOLAR_FORECAST_DB_DATABASE'] = 'solar_forecast_test'
+
 from datetime import datetime, timedelta, timezone
 from solar_forecast.db.client import DatabaseClient
+from solar_forecast.config import DB_DATABASE
+
+assert DB_DATABASE == 'solar_forecast_test', \
+    f'Refusing to run tests against database {DB_DATABASE!r} - ' \
+    'tests must only run against solar_forecast_test'
 from solar_forecast.processing.accuracy_learner import AccuracyLearner
 import logging
 
@@ -21,15 +31,18 @@ logger = logging.getLogger(__name__)
 
 
 def create_test_forecast_vector(peak_value=1.0, noise=0.1):
-    """Create a test forecast vector with some realistic values."""
+    """Create a test forecast vector with some realistic values.
+
+    Rolling-vector convention: index k is the (k+1)-th 15-min block
+    after generation time. Shape the first ~5 hours so the short
+    Fibonacci horizons (4, 8, 12, 20 blocks -> indexes 3, 7, 11, 19)
+    have non-zero forecast values for the learner to work with.
+    """
     vector = [0.0] * 672
-    # Add some realistic solar production pattern
-    # Simulate a bell curve from 6am (block 24) to 6pm (block 72)
-    for i in range(24, 72):  # 6am to 6pm
-        # Peak at noon (block 48)
-        hours_from_peak = abs(i - 48)
-        # Bell curve: exp(-x^2 / 2sigma^2)
-        sigma = 12  # Spread of 3 hours
+    # Peak ~2h after generation, spread of 3 hours
+    for i in range(1, 20):
+        hours_from_peak = abs(i - 8)
+        sigma = 12
         value = peak_value * (0.5 + 0.5 * (1 - hours_from_peak / sigma)) ** 2
         # Add some noise
         import random

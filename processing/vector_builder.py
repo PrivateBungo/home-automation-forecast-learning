@@ -56,8 +56,8 @@ class VectorBuilder:
             else:
                 timestamp = timestamp.astimezone(timezone.utc)
         
-        # Fetch raw data
-        forecasts = self.fetcher.fetch_all()
+        # Fetch raw data (rolling vector anchored at this timestamp)
+        forecasts = self.fetcher.fetch_all(timestamp)
         
         results = {}
         with self.db as db:
