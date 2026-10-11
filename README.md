@@ -72,6 +72,10 @@ solar_forecast/
 │   └── backfill.py       # Rebuild learning tables from stored history
 └── models/
     └── __init__.py
+
+forecast_gui/               # Web GUI (see below)
+├── server.py             # HTTP server: serves the page + /api/data from Postgres
+└── static/index.html     # Single page: solar/price Gaussian plumes + shower bars
 ```
 
 ## Quick Start
@@ -166,6 +170,22 @@ The daily forecast runs once per day, gated on 13:00 Europe/Amsterdam
 (after the ~12:40 auction settlement); the publisher only assembles,
 so it is fast. Rows older than `PRICE_PUBLISHER_RETENTION_DAYS` (30)
 are pruned each run.
+
+## Web GUI (`forecast_gui/`)
+
+Single-page visualization of the sliding 168h window
+(`http://<host>:8788`):
+
+- **Solar plume**: mean + P10/P90 from `solar_combined_forecast`
+  (15-min blocks, kWh/15min)
+- **APX price plume**: mean + P10/P90 from `price_forecast_15min`
+  (15-min blocks, EUR/kWh; settled blocks are real auction prices,
+  band is flat there)
+- **Shower probability bars**: weekly UTC profile mapped onto the window
+
+P10/P90 = mean -/+ 1.2816 * sqrt(variance), matching how the stored
+bands were built. Run it with:
+`/home/gijs/venvs/forecast/bin/python /home/gijs/solar_forecast/forecast_gui/server.py [port]`
 
 ## Database Schema
 

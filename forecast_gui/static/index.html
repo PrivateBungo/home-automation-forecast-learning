@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Forecast GUI - next 168h</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 16px; background: #101418; color: #d8dee6;
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  h1 { font-size: 1.3rem; margin: 0 0 4px; }
+  #meta { color: #7d8590; font-size: .85rem; margin-bottom: 12px; }
+  .card {
+    background: #161c22; border: 1px solid #232b33; border-radius: 10px;
+    padding: 12px; margin-bottom: 16px;
+  }
+  .card h2 { font-size: 1rem; margin: 0 0 8px; color: #aeb7c2; }
+  .chart { width: 100%; height: 320px; }
+  #err { color: #ff6b6b; }
+</style>
+<script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
+</head>
+<body>
+<h1>Forecast &mdash; next 168 hours</h1>
+<div id="meta">loading&hellip;</div>
+<div id="err"></div>
+<div class="card">
+  <h2>Solar production (combined east + west) &mdash; Gaussian plume</h2>
+  <div id="solar" class="chart"></div>
+</div>
+<div class="card">
+  <h2>NL day-ahead (APX) price &mdash; Gaussian plume</h2>
+  <div id="price" class="chart"></div>
+</div>
+<div class="card">
+  <h2>Shower probability &mdash; per hour</h2>
+  <div id="shower" class="chart"></div>
+</div>
+
+<script>
+const charts = {};
+const CAT = { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' };
+// ECharts passes category values as strings; Number() turns them back
+// into epoch ms. new Date("1760...") would be Invalid Date.
+function toDate(ms) { return new Date(Number(ms)); }
+const fmtDateTime = ms => { const d = toDate(ms); return isNaN(d) ? String(ms) : d.toLocaleString([], CAT); };
+const fmtHour = fmtDateTime;
+
+function axisTooltip(unit, digits) {
+  return {
+    trigger: 'axis',
+    backgroundColor: '#1c242c', borderColor: '#2c3640',
+    textStyle: { color: '#d8dee6' },
+    formatter: params => {
+      const head = fmtDateTime(params[0].axisValue);
+      const rows = params
+        .filter(p => p.value != null && !isNaN(p.value))
+        .map(p => p.marker + ' ' + p.seriesName + ': <b>'
+             + Number(p.value).toFixed(digits) + '</b> ' + unit);
+      return [head].concat(rows).join('<br>');
+    }
+  };
+}
+
+function baseAxis(times, formatter) {
+  return {
+    type: 'category',
+    data: times,
+    axisLine: { lineStyle: { color: '#2c3640' } },
+    axisTick: { show: false },
+    axisLabel: { color: '#7d8590', formatter: formatter, hideOverlap: true }
+  };
+}
+
+function nowIndex(times) {
+  const now = Date.now();
+  let idx = -1;
+  for (let i = 0; i < times.length; i++) {
+    if (times[i] <= now) idx = i; else break;
+  }
+  if (idx < 0 || idx >= times.length - 1) return null;
+  return idx;
+}
+
+// Dotted vertical rule at every local 00:00, plus the dashed 'now' line.
+function dayMarkLines(times) {
+  const items = [];
+  times.forEach((t, i) => {
+    const d = toDate(t);
+    if (d.getHours() === 0 && d.getMinutes() === 0)
+      items.push({ xAxis: i,
+                   lineStyle: { type: 'dotted', color: '#3a4750', width: 1 },
+                   label: { show: false } });
+  });
+  const ni = nowIndex(times);
+  if (ni != null)
+    items.push({ xAxis: ni,
+                 lineStyle: { type: 'dashed', color: '#5a6673', width: 1 },
+                 label: { formatter: 'now', color: '#7d8590' } });
+  if (!items.length) return undefined;
+  return { silent: true, symbol: 'none', data: items };
+}
+
+function plumeOption(d, unit, bandColor, lineColor) {
+  // Band = stacked area: base p10 (invisible) + (p90-p10) filled.
+  // All series are plain value arrays on the shared category grid.
+  const bandW = d.p10.map((v, i) => Math.max(+(d.p90[i] - v).toFixed(6), 0));
+  const ml = dayMarkLines(d.times);
+  const series = [
+    { name: '_band_base', type: 'line', stack: 'band', data: d.p10,
+      symbol: 'none', lineStyle: { opacity: 0 }, silent: true, z: 1,
+      itemStyle: { color: bandColor }, emphasis: { disabled: true } },
+    { name: '_band_fill', type: 'line', stack: 'band', data: bandW,
+      symbol: 'none', lineStyle: { opacity: 0 }, silent: true, z: 1,
+      itemStyle: { color: bandColor }, areaStyle: { color: bandColor },
+      emphasis: { disabled: true } },
+    { name: 'mean', type: 'line', data: d.mean.map(v => +v.toFixed(4)),
+      symbol: 'none', lineStyle: { color: lineColor, width: 2 },
+      itemStyle: { color: lineColor }, z: 3 },
+    { name: 'P10', type: 'line', data: d.p10.map(v => +v.toFixed(4)),
+      symbol: 'none', lineStyle: { color: bandColor, width: 1, opacity: .8 },
+      itemStyle: { color: bandColor }, z: 2 },
+    { name: 'P90', type: 'line', data: d.p90.map(v => +v.toFixed(4)),
+      symbol: 'none', lineStyle: { color: bandColor, width: 1, opacity: .8 },
+      itemStyle: { color: bandColor }, z: 2 }
+  ];
+  if (ml) series[2].markLine = ml;
+  return {
+    backgroundColor: 'transparent',
+    grid: { left: 60, right: 20, top: 30, bottom: 70 },
+    legend: { data: ['mean', 'P10', 'P90'],
+              textStyle: { color: '#aeb7c2' }, top: 0 },
+    tooltip: axisTooltip(unit, 4),
+    xAxis: baseAxis(d.times, fmtDateTime),
+    yAxis: {
+      scale: true,
+      name: unit, nameTextStyle: { color: '#7d8590' },
+      splitLine: { lineStyle: { color: '#1d242b' } },
+      axisLabel: { color: '#7d8590' }
+    },
+    dataZoom: [
+      { type: 'inside' },
+      { type: 'slider', height: 18, bottom: 8, borderColor: '#2c3640',
+        textStyle: { color: '#7d8590' }, labelFormatter: fmtDateTime }
+    ],
+    series
+  };
+}
+
+function showerOption(showers) {
+  const colors = ['#4fc3f7', '#aed581', '#ffb74d', '#f48fb1'];
+  const series = showers.map((s, i) => ({
+    name: s.sensor, type: 'bar',
+    data: s.p.map(v => +(v * 100).toFixed(2)),
+    barMaxWidth: 8, itemStyle: { color: colors[i % 4] }
+  }));
+  const ml = dayMarkLines(showers.length ? showers[0].times : []);
+  if (ml) series[0].markLine = ml;
+  return {
+    backgroundColor: 'transparent',
+    grid: { left: 60, right: 20, top: 30, bottom: 70 },
+    legend: { data: showers.map(s => s.sensor), textStyle: { color: '#aeb7c2' },
+              top: 0, show: showers.length > 1 },
+    tooltip: axisTooltip('%', 1),
+    xAxis: baseAxis(showers.length ? showers[0].times : [], fmtHour),
+    yAxis: {
+      max: 100, name: '%', nameTextStyle: { color: '#7d8590' },
+      splitLine: { lineStyle: { color: '#1d242b' } },
+      axisLabel: { color: '#7d8590', formatter: '{value}%' }
+    },
+    dataZoom: [
+      { type: 'inside' },
+      { type: 'slider', height: 18, bottom: 8, borderColor: '#2c3640',
+        textStyle: { color: '#7d8590' }, labelFormatter: fmtHour }
+    ],
+    series
+  };
+}
+
+function mount(id) {
+  const el = document.getElementById(id);
+  const c = echarts.init(el);
+  new ResizeObserver(() => c.resize()).observe(el);
+  return c;
+}
+
+async function refresh() {
+  const err = document.getElementById('err');
+  err.textContent = '';
+  let d;
+  try {
+    const r = await fetch('/api/data');
+    if (!r.ok) throw new Error((await r.json()).error || ('HTTP ' + r.status));
+    d = await r.json();
+  } catch (e) {
+    err.textContent = 'API error: ' + e.message;
+    return;
+  }
+  const fmt = t => new Date(t).toLocaleString();
+  const meta = [];
+  meta.push('window ' + fmt(d.window_start) + ' &rarr; ' + fmt(d.window_end));
+  if (d.solar) meta.push('solar issued ' + fmt(d.solar.issued_at));
+  if (d.price) meta.push('price issued ' + fmt(d.price.issued_at)
+      + (d.price.settled_blocks != null
+         ? ' (' + d.price.settled_blocks + ' settled, 15-min)' : ''));
+  meta.push('P10/P90 = mean &minus; ' + d.z + '&middot;&sigma;');
+  document.getElementById('meta').innerHTML = meta.join(' &nbsp;|&nbsp; ');
+
+  if (d.solar)
+    charts.solar.setOption(plumeOption(d.solar, 'kWh/15min',
+      'rgba(255,183,77,0.18)', '#ffca28'), true);
+  if (d.price)
+    charts.price.setOption(plumeOption(d.price, 'EUR/kWh',
+      'rgba(79,195,247,0.18)', '#4fc3f7'), true);
+  charts.shower.setOption(showerOption(d.showers || []), true);
+}
+
+charts.solar  = mount('solar');
+charts.price  = mount('price');
+charts.shower = mount('shower');
+refresh();
+setInterval(refresh, 5 * 60 * 1000);
+</script>
+</body>
+</html>
