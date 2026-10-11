@@ -118,6 +118,8 @@ def test_end_to_end():
         db.query('DELETE FROM solar_forecast_vectors', fetch=False)
         db.query('DELETE FROM solar_actual_production', fetch=False)
         db.query('DELETE FROM solar_accuracy', fetch=False)
+        db.query('DELETE FROM solar_reference_magnitude', fetch=False)
+        db.query('DELETE FROM solar_covariance', fetch=False)
         db.query('DELETE FROM solar_correlation_local', fetch=False)
         db.query('DELETE FROM solar_correlation_daily', fetch=False)
     logger.info("Database cleaned")

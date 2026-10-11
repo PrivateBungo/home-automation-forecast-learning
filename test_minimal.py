@@ -33,6 +33,8 @@ def test_learning_directly():
         db.query('DELETE FROM solar_forecast_vectors', fetch=False)
         db.query('DELETE FROM solar_actual_production', fetch=False)
         db.query('DELETE FROM solar_accuracy', fetch=False)
+        db.query('DELETE FROM solar_reference_magnitude', fetch=False)
+        db.query('DELETE FROM solar_covariance', fetch=False)
     
     # Create test data
     # Use horizon=12 blocks (3 hours) which IS in the Fibonacci list

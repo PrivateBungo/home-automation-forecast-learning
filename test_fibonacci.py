@@ -36,6 +36,8 @@ def test_fibonacci_learning():
         db.query('DELETE FROM solar_forecast_vectors', fetch=False)
         db.query('DELETE FROM solar_actual_production', fetch=False)
         db.query('DELETE FROM solar_accuracy', fetch=False)
+        db.query('DELETE FROM solar_reference_magnitude', fetch=False)
+        db.query('DELETE FROM solar_covariance', fetch=False)
     
     # Test with horizon = 4 blocks (1 hour)
     # At time T=10:00, forecast was made at T-1h = 09:00
@@ -94,9 +96,12 @@ def test_fibonacci_learning():
         
         if result.get('updates'):
             for update in result['updates']:
+                norm_err = (f"{update['norm_error']:.4f}"
+                            if update['norm_error'] is not None else "warming up")
                 logger.info(f"  Horizon {update['forecast_horizon_blocks']}: "
                           f"forecast={update['forecast']}, actual={update['actual']}, "
-                          f"error={update['error']:.4f}")
+                          f"abs_error={update['abs_error']:.4f}, "
+                          f"norm_error={norm_err}")
     
     # Check database
     with DatabaseClient() as db:

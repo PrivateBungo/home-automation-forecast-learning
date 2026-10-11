@@ -41,6 +41,7 @@ from solar_forecast.db.client import DatabaseClient
 from solar_forecast.sensors.forecast_fetcher import ForecastFetcher
 from solar_forecast.processing.vector_builder import VectorBuilder
 from solar_forecast.processing.accuracy_learner import AccuracyLearner
+from solar_forecast.processing.combined_builder import CombinedBuilder
 
 logger = logging.getLogger(__name__)
 
@@ -69,6 +70,7 @@ class Orchestrator:
     def __init__(self):
         self.builder = VectorBuilder()
         self.learner = AccuracyLearner()
+        self.combined_builder = CombinedBuilder()
     
     def run(self, test_mode: bool = False, force: bool = False) -> dict:
         """
@@ -92,7 +94,7 @@ class Orchestrator:
         results = {}
         
         # Step 1: Build and store forecast vectors
-        logger.info("Step 1/2: Building forecast vectors...")
+        logger.info("Step 1/3: Building forecast vectors...")
         if test_mode:
             vectors = self.builder.fetcher.fetch_all()
             for roof, data in vectors.items():
@@ -107,7 +109,7 @@ class Orchestrator:
             logger.info("Forecast vectors stored with UTC timestamp")
         
         # Step 2: Update accuracy model
-        logger.info("Step 2/2: Updating accuracy model...")
+        logger.info("Step 2/3: Updating accuracy model...")
         if test_mode:
             print("\n[TEST] Would update accuracy model for Fibonacci horizons:")
             print(f"  {FIBONACCI_HORIZONS_BLOCKS}")
@@ -115,6 +117,27 @@ class Orchestrator:
             learn_result = self.learner.update_from_latest_actuals()
             results['accuracy'] = learn_result
             logger.info(f"Accuracy model updated: {learn_result.get('updates_performed', 0)} cells")
+        
+        # Step 3: Build the combined east+west forecast
+        logger.info("Step 3/3: Building combined forecast...")
+        if test_mode:
+            with self.combined_builder.db:
+                combined = self.combined_builder.build(vectors=results.get('vectors'))
+            print("\n[TEST] Combined forecast (not stored):")
+            print(f"  Issued at:   {combined['issued_at']}")
+            print(f"  Week total:  {combined['total_mean_kwh']:.2f} kWh "
+                  f"(raw {combined['total_raw_kwh']:.2f} kWh)")
+            results['combined'] = {
+                'total_mean_kwh': combined['total_mean_kwh']
+            }
+        else:
+            combined_result = self.combined_builder.build_and_store()
+            results['combined'] = combined_result
+            logger.info(
+                f"Combined forecast stored: "
+                f"{combined_result['total_mean_kwh']:.2f} kWh week total "
+                f"(raw {combined_result['total_raw_kwh']:.2f} kWh)"
+            )
         
         results['status'] = 'completed'
         results['timestamp'] = timestamp.isoformat()

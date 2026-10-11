@@ -20,11 +20,16 @@ we learn how wrong they are and how those errors correlate across time.
 
 ```
 1. Store actual production (15-min kWh) in solar_actual_production
-2. For each Fibonacci horizon H:
-   a. Compute error_H = (actual - forecast_H) / forecast_H
-   b. Update EMA: mean_error, variance for (time_of_day_block, H, roof)
-   c. Update LOCAL correlation: error_H vs avg_error ±2h
-   d. Update DAILY correlation: error_H vs avg_error ±2h from 24h ago
+2. Update reference magnitude: slow EMA of actuals per (time_of_day_block, roof)
+   (warm-up: plain average for the first ~20 samples per block)
+3. For each Fibonacci horizon H:
+   a. Compute abs_error = actual - forecast_H (kWh, always learned)
+   b. Compute norm_error = abs_error / max(reference, 0.05)
+      (only learned once the reference has >= 3 samples)
+   c. Update EMA: mean_abs_error, variance (absolute, kWh/kWh^2) and
+      mean_error (normalized) for (time_of_day_block, H, roof)
+   d. Update LOCAL correlation: norm_error vs avg norm_error ±2h
+   e. Update DAILY correlation: norm_error vs avg norm_error ±2h from 24h ago
 ```
 
 ---
@@ -62,14 +67,19 @@ for H = FIB_HORIZONS
     forecast_T = get_forecast(T, east, H);
     actual_T = get_actual(T, east);
     
-    % --- 2. COMPUTE ERROR (RELATIVE) ---
-    error_H = (actual_T - forecast_T) / forecast_T;
+    % --- 2. COMPUTE ERROR (ABSOLUTE + NORMALIZED) ---
+    abs_H = actual_T - forecast_T;
+    ref = get_reference(tod, roof);   % slow EMA of actuals, floor 0.05 kWh
     
     % --- 3. UPDATE EMA (MEAN + VARIANCE) ---
-    [old_mean, old_var, count] = db.get_accuracy(tod, H, east);
-    new_mean = (1-ALPHA) * old_mean + ALPHA * error_H;
-    new_var  = (1-ALPHA) * old_var  + ALPHA * (error_H - new_mean)^2;
-    db.update_accuracy(tod, H, east, new_mean, new_var, count+1);
+    [old_mean, old_mean_abs, old_var, count] = db.get_accuracy(tod, H, east);
+    new_mean_abs = (1-ALPHA) * old_mean_abs + ALPHA * abs_H;
+    new_var  = (1-ALPHA) * old_var  + ALPHA * (abs_H - new_mean_abs)^2;
+    if ref.count >= 3
+        norm_H = abs_H / max(ref, 0.05);
+        new_mean = (1-ALPHA) * old_mean + ALPHA * norm_H;
+    end
+    db.update_accuracy(tod, H, east, new_mean, new_mean_abs, new_var, count+1);
     
     % --- 4. LOCAL CORRELATION: +/- 2 HOURS ---
     local_errors = [];
@@ -77,12 +87,12 @@ for H = FIB_HORIZONS
         t_local = T + offset;
         forecast_local = get_forecast(t_local, east, H);
         actual_local = get_actual(t_local, east);
-        error_local = (actual_local - forecast_local) / forecast_local;
+        error_local = (actual_local - forecast_local) / max(ref(t_local), 0.05);
         local_errors = [local_errors, error_local];
     end
     avg_local = mean(local_errors);
     [old_corr, count] = db.get_local_correlation(tod, H, east);
-    new_corr = (1-ALPHA) * old_corr + ALPHA * (error_H * avg_local);
+    new_corr = (1-ALPHA) * old_corr + ALPHA * (norm_H * avg_local);
     db.update_local_correlation(tod, H, east, new_corr, count+1);
     
     % --- 5. DAILY CORRELATION: SAME TIME 24H AGO +/- 2H ---
@@ -91,12 +101,12 @@ for H = FIB_HORIZONS
         t_daily = T - DAILY_OFFSET + offset;
         forecast_daily = get_forecast(t_daily, east, H);
         actual_daily = get_actual(t_daily, east);
-        error_daily = (actual_daily - forecast_daily) / forecast_daily;
+        error_daily = (actual_daily - forecast_daily) / max(ref(t_daily), 0.05);
         daily_errors = [daily_errors, error_daily];
     end
     avg_daily = mean(daily_errors);
     [old_corr, count] = db.get_daily_correlation(tod, H, east);
-    new_corr = (1-ALPHA) * old_corr + ALPHA * (error_H * avg_daily);
+    new_corr = (1-ALPHA) * old_corr + ALPHA * (norm_H * avg_daily);
     db.update_daily_correlation(tod, H, east, new_corr, count+1);
 end
 ```
